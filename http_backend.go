@@ -15,6 +15,8 @@
 package colly
 
 import (
+	"bytes"
+	"context"
 	"crypto/sha1"
 	"encoding/gob"
 	"encoding/hex"
@@ -32,6 +34,7 @@ import (
 	"compress/gzip"
 
 	"github.com/gobwas/glob"
+	"github.com/gocolly/colly/v2/cache"
 )
 
 type httpBackend struct {
@@ -129,7 +132,7 @@ func (h *httpBackend) GetMatchingRule(domain string) *LimitRule {
 	return nil
 }
 
-func (h *httpBackend) Cache(request *http.Request, bodySize int, checkHeadersFunc checkHeadersFunc, cacheDir string) (*Response, error) {
+func (h *httpBackend) CacheDir(request *http.Request, bodySize int, checkHeadersFunc checkHeadersFunc, cacheDir string) (*Response, error) {
 	if cacheDir == "" || request.Method != "GET" || request.Header.Get("Cache-Control") == "no-cache" {
 		return h.Do(request, bodySize, checkHeadersFunc)
 	}
@@ -165,6 +168,35 @@ func (h *httpBackend) Cache(request *http.Request, bodySize int, checkHeadersFun
 	}
 	file.Close()
 	return resp, os.Rename(filename+"~", filename)
+}
+
+func (h *httpBackend) Cache(request *http.Request, bodySize int, checkHeadersFunc checkHeadersFunc, cache cache.Cache) (*Response, error) {
+	if cache == nil || request.Method != "GET" || request.Header.Get("Cache-Control") == "no-cache" {
+		return h.Do(request, bodySize, checkHeadersFunc)
+	}
+	sum := sha1.Sum([]byte(request.URL.String()))
+	key := hex.EncodeToString(sum[:])
+	ctx := context.Background()
+	if buf, err := cache.Get(ctx, key); err == nil {
+		resp := new(Response)
+		err := gob.NewDecoder(bytes.NewBuffer(buf)).Decode(resp)
+		checkHeadersFunc(request, resp.StatusCode, *resp.Headers)
+		if resp.StatusCode < 500 {
+			return resp, err
+		}
+	}
+	resp, err := h.Do(request, bodySize, checkHeadersFunc)
+	if err != nil || resp.StatusCode >= 500 {
+		return resp, err
+	}
+	buf := bytes.NewBuffer(nil)
+	if err := gob.NewEncoder(buf).Encode(resp); err != nil {
+		return resp, err
+	}
+	if err := cache.Put(ctx, key, buf.Bytes()); err != nil {
+		return resp, err
+	}
+	return resp, nil
 }
 
 func (h *httpBackend) Do(request *http.Request, bodySize int, checkHeadersFunc checkHeadersFunc) (*Response, error) {

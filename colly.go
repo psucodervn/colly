@@ -41,6 +41,7 @@ import (
 	"github.com/PuerkitoBio/goquery"
 	"github.com/antchfx/htmlquery"
 	"github.com/antchfx/xmlquery"
+	"github.com/gocolly/colly/v2/cache"
 	"github.com/gocolly/colly/v2/debug"
 	"github.com/gocolly/colly/v2/storage"
 	"github.com/kennygrant/sanitize"
@@ -86,6 +87,8 @@ type Collector struct {
 	// CacheDir specifies a location where GET requests are cached as files.
 	// When it's not defined, caching is disabled.
 	CacheDir string
+	// Cache storage
+	Cache cache.Cache
 	// IgnoreRobotsTxt allows the Collector to ignore any restrictions set by
 	// the target host's robots.txt file.  See http://www.robotstxt.org/ for more
 	// information.
@@ -342,6 +345,12 @@ func MaxBodySize(sizeInBytes int) CollectorOption {
 func CacheDir(path string) CollectorOption {
 	return func(c *Collector) {
 		c.CacheDir = path
+	}
+}
+
+func Cache(cache cache.Cache) CollectorOption {
+	return func(c *Collector) {
+		c.Cache = cache
 	}
 }
 
@@ -672,7 +681,7 @@ func (c *Collector) fetch(u, method string, depth int, requestData io.Reader, ct
 		c.handleOnResponseHeaders(&Response{Ctx: ctx, Request: request, StatusCode: statusCode, Headers: &headers})
 		return !request.abort
 	}
-	response, err := c.backend.Cache(req, c.MaxBodySize, checkHeadersFunc, c.CacheDir)
+	response, err := c.backend.Cache(req, c.MaxBodySize, checkHeadersFunc, c.Cache)
 	if proxyURL, ok := req.Context().Value(ProxyURLKey).(string); ok {
 		request.ProxyURL = proxyURL
 	}
@@ -1253,6 +1262,7 @@ func (c *Collector) Clone() *Collector {
 		AllowedDomains:         c.AllowedDomains,
 		AllowURLRevisit:        c.AllowURLRevisit,
 		CacheDir:               c.CacheDir,
+		Cache:                  c.Cache,
 		DetectCharset:          c.DetectCharset,
 		DisallowedDomains:      c.DisallowedDomains,
 		ID:                     atomic.AddUint32(&collectorCounter, 1),
